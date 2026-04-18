@@ -371,7 +371,8 @@ set_if()
                 esac
             ;;
     esac
-    case $pdp_type in
+    pdp_type_lower=$(echo $pdp_type | tr 'A-Z' 'a-z')
+    case $pdp_type_lower in
         "ip")
             env4="1"
             env6="0"
@@ -1046,6 +1047,51 @@ auto_dial_hang(){
     return 1
 }
 
+ip_change_intel()
+{
+    m_debug "ip_change_intel"
+    local public_dns1_ipv4="8.8.8.8"
+    local public_dns2_ipv4="8.8.4.4"
+    local netmask="255.255.255.0"
+
+    # Get IP from AT+CGCONTRDP
+    # Response: +CGCONTRDP: 0,5,"apn","ip.netmask","gateway","dns1","dns2"
+    response=$(at ${at_port} "AT+CGCONTRDP=$pdp_index")
+    cgcontrdp=$(echo "$response" | grep "+CGCONTRDP:")
+    # Extract all IPs from response (in order: ip+mask, gateway, dns1, dns2)
+    ipv4_config=$(echo "$cgcontrdp" | awk -F'"' '{print $4}' | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1)
+    gateway=$(echo "$cgcontrdp" | awk -F'"' '{print $6}' | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+')
+    ipv4_dns1=$(echo "$cgcontrdp" | awk -F'"' '{print $8}' | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+')
+    ipv4_dns2=$(echo "$cgcontrdp" | awk -F'"' '{print $10}' | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+')
+
+    [ -z "$ipv4_config" ] && {
+        m_debug "ip_change_intel: failed to get IP from CGCONTRDP, fallback to CGPADDR"
+        response=$(at ${at_port} "AT+CGPADDR=$pdp_index")
+        ipv4_config=$(echo "$response" | grep "+CGPADDR:" | grep -o '"[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+"' | head -1 | tr -d '"')
+        gateway="${ipv4_config%.*}.1"
+    }
+    [ -z "$ipv4_dns1" ] && ipv4_dns1="$public_dns1_ipv4"
+    [ -z "$ipv4_dns2" ] && ipv4_dns2="$public_dns2_ipv4"
+    [ -z "$gateway" ] && gateway="${ipv4_config%.*}.1"
+
+    uci set network.${interface_name}.proto='static'
+    uci set network.${interface_name}.ipaddr="${ipv4_config}"
+    uci set network.${interface_name}.netmask="${netmask}"
+    uci set network.${interface_name}.gateway="${gateway}"
+    uci set network.${interface_name}.device="${modem_netcard}"
+    uci set network.${interface_name}.peerdns='0'
+    uci -q del network.${interface_name}.dns
+    uci add_list network.${interface_name}.dns="${ipv4_dns1}"
+    uci add_list network.${interface_name}.dns="${ipv4_dns2}"
+    uci commit network
+    ip link set ${modem_netcard} up
+    ip link set ${modem_netcard} arp off
+    ifdown ${interface_name}
+    ifup ${interface_name}
+    ip link set ${modem_netcard} arp off
+    m_debug "ip_change_intel: set $interface_name to $ipv4_config gw=$gateway dns=$ipv4_dns1,$ipv4_dns2"
+}
+
 ip_change_fm350()
 {
     m_debug "ip_change_fm350"
@@ -1182,6 +1228,9 @@ handle_ip_change()
             case $platform in
                 "mediatek")
                     ip_change_fm350
+                    ;;
+                "intel")
+                    ip_change_intel
                     ;;
             esac
             ;;

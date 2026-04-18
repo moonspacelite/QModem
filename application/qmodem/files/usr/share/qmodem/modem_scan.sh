@@ -280,7 +280,7 @@ scan_usb_slot_interfaces()
             usbserial_generic|\
             usbserial)
                 ttyUSB_device=$(ls "$slot_path/$interface/" | grep ttyUSB)
-                ttyACM_device=$(ls "$slot_path/$interface/" | grep ttyACM)
+                ttyACM_device=$(ls "$slot_path/$interface/tty/" 2>/dev/null | grep ttyACM || ls "$slot_path/$interface/" | grep ttyACM)
                 [ -z "$ttyUSB_device" ] && [ -z "$ttyACM_device" ] && continue
                 [ -n "$ttyUSB_device" ] && device="$ttyUSB_device"
                 [ -n "$ttyACM_device" ] && device="$ttyACM_device"

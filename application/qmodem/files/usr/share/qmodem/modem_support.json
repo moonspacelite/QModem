@@ -952,6 +952,7 @@
                 ]
             },
             "l850-gl": {
+                "id": "8087:095a",
                 "manufacturer_id": "8087",
                 "manufacturer": "fibocom",
                 "platform": "intel",

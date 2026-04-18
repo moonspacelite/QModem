@@ -111,7 +111,7 @@
                 "mode": "ncm",
                 "option_driver": 1,
                 "include": [
-                    "1.4"
+                    "1.0"
                 ]
             }
         }
