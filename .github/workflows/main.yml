@@ -187,7 +187,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: sdk
-          key: openwrt-sdk-${{ matrix.build_arch }}-24.10-v2
+          key: openwrt-sdk-${{ matrix.build_arch }}-24.10-v3
 
       - name: Initialization environment
         if: steps.cache-sdk.outputs.cache-hit != 'true'
@@ -202,10 +202,6 @@ jobs:
             mkdir sdk && tar -xvf $file_name -C ./sdk --strip-components=1
           fi
           cd sdk
-          echo "src-git base https://github.com/openwrt/openwrt.git;openwrt-24.10" > feeds.conf
-          echo "src-git packages https://github.com/openwrt/packages.git;openwrt-24.10" >> feeds.conf
-          echo "src-git luci https://github.com/openwrt/luci.git;openwrt-24.10" >> feeds.conf
-          echo "src-git routing https://git.openwrt.org/feed/routing.git;openwrt-24.10"  >> feeds.conf
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           cd ..
