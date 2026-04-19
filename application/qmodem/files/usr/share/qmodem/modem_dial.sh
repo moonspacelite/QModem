@@ -255,6 +255,20 @@ check_dial_prepare()
 
 check_ip()
 {
+    # Intel XMM (L850-GL): parse AT+CGPADDR field 2 (IPv4 only)
+    if [ "$manufacturer" = "fibocom" ] && [ "$platform" = "intel" ]; then
+        local resp=$(at "$at_port" "AT+CGPADDR=$pdp_index" 2>/dev/null | grep "+CGPADDR:")
+        local intel_ip=$(echo "$resp" | awk -F'"' '{print $2}')
+        intel_ip=$(echo "$intel_ip" | tr -d "\n\r")
+        if [ -n "$intel_ip" ] && [ "$intel_ip" != "0.0.0.0" ]; then
+            ipv4="$intel_ip"
+            connection_status=1
+        else
+            ipv4=""
+            connection_status=0
+        fi
+        return
+    fi
     case $manufacturer in
             "simcom")
                 case $platform in
@@ -1054,25 +1068,25 @@ ip_change_intel()
     local public_dns2_ipv4="8.8.4.4"
     local netmask="255.255.255.0"
 
-    # Get IP from AT+CGCONTRDP
-    # Response: +CGCONTRDP: 0,5,"apn","ip.netmask","gateway","dns1","dns2"
-    response=$(at ${at_port} "AT+CGCONTRDP=$pdp_index")
-    cgcontrdp=$(echo "$response" | grep "+CGCONTRDP:")
-    # Extract all IPs from response (in order: ip+mask, gateway, dns1, dns2)
-    ipv4_config=$(echo "$cgcontrdp" | awk -F'"' '{print $4}' | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1)
-    gateway=$(echo "$cgcontrdp" | awk -F'"' '{print $6}' | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+')
-    ipv4_dns1=$(echo "$cgcontrdp" | awk -F'"' '{print $8}' | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+')
-    ipv4_dns2=$(echo "$cgcontrdp" | awk -F'"' '{print $10}' | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+')
+    # Get IPv4 from AT+CGPADDR (field 2 in quotes, IPv4 only)
+    local paddr=$(at ${at_port} "AT+CGPADDR=$pdp_index" | grep "+CGPADDR:")
+    ipv4_config=$(echo "$paddr" | awk -F'"' '{print $2}' | tr -d "\n\r")
 
-    [ -z "$ipv4_config" ] && {
-        m_debug "ip_change_intel: failed to get IP from CGCONTRDP, fallback to CGPADDR"
-        response=$(at ${at_port} "AT+CGPADDR=$pdp_index")
-        ipv4_config=$(echo "$response" | grep "+CGPADDR:" | grep -o '"[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+"' | head -1 | tr -d '"')
-        gateway="${ipv4_config%.*}.1"
+    # Gateway = IP + 1 (NCM Intel does not use ARP)
+    local last_octet="${ipv4_config##*.}"
+    gateway="${ipv4_config%.*}.$((last_octet+1))"
+
+    # Get DNS from AT+XDNS?
+    local xdns=$(at ${at_port} "AT+XDNS?" | grep "+XDNS: $pdp_index," | head -1)
+    ipv4_dns1=$(echo "$xdns" | awk -F'"' '{print $2}' | tr -d "\n\r")
+    ipv4_dns2=$(echo "$xdns" | awk -F'"' '{print $4}' | tr -d "\n\r")
+
+    [ -z "$ipv4_config" ] || [ "$ipv4_config" = "0.0.0.0" ] && {
+        m_debug "ip_change_intel: no valid IP from CGPADDR, skipping"
+        return
     }
-    [ -z "$ipv4_dns1" ] && ipv4_dns1="$public_dns1_ipv4"
-    [ -z "$ipv4_dns2" ] && ipv4_dns2="$public_dns2_ipv4"
-    [ -z "$gateway" ] && gateway="${ipv4_config%.*}.1"
+    [ -z "$ipv4_dns1" ] || [ "$ipv4_dns1" = "0.0.0.0" ] && ipv4_dns1="$public_dns1_ipv4"
+    [ -z "$ipv4_dns2" ] || [ "$ipv4_dns2" = "0.0.0.0" ] && ipv4_dns2="$public_dns2_ipv4"
 
     uci set network.${interface_name}.proto='static'
     uci set network.${interface_name}.ipaddr="${ipv4_config}"
@@ -1084,10 +1098,12 @@ ip_change_intel()
     uci add_list network.${interface_name}.dns="${ipv4_dns1}"
     uci add_list network.${interface_name}.dns="${ipv4_dns2}"
     uci commit network
+    ifdown ${interface_name}
     ip link set ${modem_netcard} up
     ip link set ${modem_netcard} arp off
-    ifdown ${interface_name}
     ifup ${interface_name}
+    sleep 2
+    ip link set ${modem_netcard} up
     ip link set ${modem_netcard} arp off
     m_debug "ip_change_intel: set $interface_name to $ipv4_config gw=$gateway dns=$ipv4_dns1,$ipv4_dns2"
 }
@@ -1287,13 +1303,13 @@ at_dial_monitor()
     at_dial
     ipv4_cache=$ipv4
     ipv6_cache=$ipv6
-    sleep 5
+    [ "$manufacturer" = "fibocom" ] && [ "$platform" = "intel" ] && sleep 15 || sleep 5
     while true; do
         check_ip
         case $connection_status in
             0)
                 at_dial
-                sleep 3
+                [ "$manufacturer" = "fibocom" ] && [ "$platform" = "intel" ] && sleep 15 || sleep 3
                 ;;
             -1)
                 unexpected_response_count=$((unexpected_response_count+1))
@@ -1318,7 +1334,7 @@ at_dial_monitor()
                     rdisc6 $origin_device &
                     ndisc6 fe80::1 $origin_device &
                 fi
-                sleep 15
+                [ "$manufacturer" = "fibocom" ] && [ "$platform" = "intel" ] && sleep 30 || sleep 15
                 ;;
         esac
         check_logfile_line
