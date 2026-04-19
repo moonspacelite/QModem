@@ -142,12 +142,21 @@ _try_device()
     config_get path "$1" path
     config_get network "$1" network
     if [ ! -d "$path" ]; then
-        /usr/share/qmodem/modem_scan.sh disable "$1"
-        uci delete network.$1
-        uci delete network.${1}v6
-        uci commit network
-        /etc/init.d/network reload
-        return
+        # Retry for modems that reset on power-on (e.g. Fibocom L850-GL Intel XMM)
+        local retry=0
+        while [ $retry -lt 6 ]; do
+            sleep 5
+            [ -d "$path" ] && break
+            retry=$((retry+1))
+        done
+        if [ ! -d "$path" ]; then
+            /usr/share/qmodem/modem_scan.sh disable "$1"
+            uci delete network.$1
+            uci delete network.${1}v6
+            uci commit network
+            /etc/init.d/network reload
+            return
+        fi
     fi
     # if device_path not parent of netdevice_path,then disable device path an scan again
     netdevice_path=`readlink -f /sys/class/net/$network/device/`
